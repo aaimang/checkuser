@@ -75,7 +75,7 @@ with warnings.catch_warnings():
     from g_python.hdirection import Direction
     from g_python.hmessage import HMessage
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 log = logging.getLogger("checkuser")
 

@@ -2,7 +2,7 @@
 # the "# /// script" header of checkuser.py (keep both lists in step).
 [project]
 name = "checkuser"
-version = "0.4.0"
+version = "0.4.1"
 description = "Room headcount logger for Habbo (G-Earth extension)"
 requires-python = ">=3.11"
 dependencies = [
