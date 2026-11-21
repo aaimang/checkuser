@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import json
+import logging
 import threading
 import time
 from datetime import UTC, datetime, timedelta, timezone
@@ -730,3 +732,37 @@ def test_live_view_keeps_a_few_history_rows_on_a_small_screen(tmp_path: Path) ->
     files.write_history()
     text = live_text(live)
     assert text.count("2026-11-21") >= cu.MIN_LIVE_HISTORY_ROWS
+
+
+# --- terminal view: no leftover lines ------------------------------------------------------
+
+
+def test_shorten() -> None:
+    assert cu.shorten("abc", 5) == "abc"
+    assert cu.shorten("abcdef", 5) == "abcd…"
+    assert cu.shorten("abc", 3) == "abc"
+
+
+def test_current_title_never_wraps_for_a_long_room_name() -> None:
+    view = mkview(["Alice"], room_name="‡‡ UN ‡‡ $ PAYS 10 - 100c DAILY $ ºJOIN NOW and more")
+    out = lines_of(cu.render_text(cu.build_current_table(view, NOW), 100))
+    first_table_line = next(i for i, ln in enumerate(out) if ln[:1] in "+|")
+    assert first_table_line == 1  # one title line, then the table
+    assert "…" in out[0]
+    assert len(out[0]) <= len(out[1])  # the title is not wider than the table
+
+
+def test_logs_go_through_the_live_console() -> None:
+    root = logging.getLogger()
+    before = list(root.handlers)
+    plain = logging.StreamHandler()
+    plain.setFormatter(logging.Formatter("%(message)s"))
+    root.addHandler(plain)
+    try:
+        buffer = io.StringIO()
+        cu.route_logs_through(cu.Console(file=buffer, width=80))
+        assert plain not in root.handlers
+        logging.getLogger("x").warning("hello [red]no markup[/red]")
+        assert "hello [red]no markup[/red]" in buffer.getvalue()
+    finally:
+        root.handlers[:] = before

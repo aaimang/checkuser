@@ -84,6 +84,11 @@ COMMAND = ":checkuser"
 DISPLAY_TZ = timezone(timedelta(hours=8), "GMT+8")
 # Fewest history rows the terminal view keeps, even when the user table fills the screen.
 MIN_LIVE_HISTORY_ROWS = 3
+# Longest title of the current-users table. The table is at least TITLE_MAX + 4 wide, so the
+# title never wraps into a second line.
+TITLE_MAX = 46
+# Lines the terminal view leaves free under the tables: log lines and the shell prompt.
+LIVE_MARGIN = 3
 
 EXTENSION_INFO = {
     "title": "Checkuser",
@@ -818,6 +823,19 @@ def relative_time(then: datetime, now: datetime) -> str:
     return " ".join(parts) + " ago"
 
 
+def shorten(text: str, limit: int) -> str:
+    """Cut ``text`` to ``limit`` characters, ending with ``…`` when it was cut.
+
+    Args:
+        text: The text.
+        limit: Most characters to keep. At least 1.
+
+    Returns:
+        The text, or its start plus ``…``.
+    """
+    return text if len(text) <= limit else text[: max(limit - 1, 0)] + "…"
+
+
 def build_current_table(view: RoomView, now: datetime, style: box.Box = box.ASCII) -> Table:
     """Build the table of users in the room now.
 
@@ -829,13 +847,18 @@ def build_current_table(view: RoomView, now: datetime, style: box.Box = box.ASCI
     Returns:
         The table.
     """
-    title = f"Current users - {view.label}" if view.room_id is not None else "Current users"
+    title = "Current users"
+    if view.room_id is not None:
+        # One line only: a title wider than the table wraps, and a taller frame breaks the
+        # terminal view (see TITLE_MAX).
+        title = shorten(f"Current users - {view.label}", TITLE_MAX)
     stamp = now.astimezone(DISPLAY_TZ).strftime("%H:%M:%S")
     table = Table(
         title=title,
         caption=f"{plural(len(view.names), 'user')} | updated {stamp} GMT+8",
         box=style,
         header_style="bold",
+        min_width=TITLE_MAX + 4,
     )
     table.add_column("#", justify="right", no_wrap=True)
     table.add_column("Name", overflow="fold", min_width=12)
@@ -1049,8 +1072,8 @@ class TableFiles:
         """
         if self.live is None:
             return
-        # 6 lines of title, border, header and caption for each table, plus 1 for a log line.
-        fit = self.live.console.height - len(view.occupants) - 13
+        # 6 lines (title, 2 borders, header line, header rule, caption) for each table.
+        fit = self.live.console.height - len(view.occupants) - 12 - LIVE_MARGIN
         rows = self.store.recent()[-max(fit, MIN_LIVE_HISTORY_ROWS) :]
         self.live.update(
             Group(
@@ -1623,6 +1646,44 @@ def demo_snapshots(now: datetime) -> list[Snapshot]:
     return rows
 
 
+class ConsoleLogHandler(logging.Handler):
+    """Prints log lines above the live tables, through the same rich console."""
+
+    def __init__(self, console: Console) -> None:
+        """Create the handler.
+
+        Args:
+            console: The console that owns the ``Live`` view.
+        """
+        super().__init__()
+        self.console = console
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Print one log line above the live view."""
+        try:
+            self.console.print(self.format(record), markup=False, highlight=False, soft_wrap=True)
+        except Exception:  # noqa: BLE001 - logging must never raise
+            self.handleError(record)
+
+
+def route_logs_through(console: Console) -> None:
+    """Swap the plain stderr log handler for one that is safe next to a ``Live`` view.
+
+    A raw write to the terminal while ``Live`` is drawing shifts the screen by one line.
+    ``Live`` then erases the wrong lines and leaves old frames behind.
+
+    Args:
+        console: The console that owns the ``Live`` view.
+    """
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        if type(handler) is logging.StreamHandler:  # not the file handlers (subclasses)
+            root.removeHandler(handler)
+            safe = ConsoleLogHandler(console)
+            safe.setFormatter(handler.formatter)
+            root.addHandler(safe)
+
+
 def run_extension(settings: Settings, gearth_args: list[str]) -> int:
     """Connect to G-Earth and run until it closes the connection.
 
@@ -1638,8 +1699,12 @@ def run_extension(settings: Settings, gearth_args: list[str]) -> int:
     stop = threading.Event()
     live = None
     if sys.stdout.isatty():
-        live = Live(console=Console(), auto_refresh=False)
+        console = Console()
+        # "crop": a frame taller than the window is cut, never scrolled (a scrolled frame
+        # leaves its top lines behind on every redraw).
+        live = Live(console=console, auto_refresh=False, vertical_overflow="crop")
         live.start()
+        route_logs_through(console)
     files = TableFiles(settings, state, store, live=live)
     files.write_all()  # the files exist from the start
     opener = Opener(files, stop)
