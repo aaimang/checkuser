@@ -128,8 +128,8 @@ class Settings(BaseModel):
     Attributes:
         interval_minutes: Minutes between history snapshots. Must divide 60.
         data_dir: Folder for ``snapshots.jsonl``, both tables and the log.
-        max_rows: How many of the newest snapshots ``history.txt`` shows. All snapshots
-            stay in ``snapshots.jsonl``.
+        terminal_rows: Most history rows the terminal view shows (the newest ones; fewer when
+            the window is small). ``history.txt`` and ``snapshots.jsonl`` hold every snapshot.
         table_width: Character width limit of both table files. The history table
             needs about 76 characters; the current-users table is narrower.
         burst_seconds: How long the live writer waits to merge a burst of changes.
@@ -139,7 +139,7 @@ class Settings(BaseModel):
 
     interval_minutes: int = Field(default=5, ge=1, le=60)
     data_dir: Path
-    max_rows: int = Field(default=50, ge=1)
+    terminal_rows: int = Field(default=50, ge=1)
     table_width: int = Field(default=100, ge=60)
     burst_seconds: float = Field(default=0.3, ge=0)
 
@@ -965,12 +965,13 @@ def write_atomic(path: Path, text: str) -> bool:
 class HistoryStore:
     """Snapshots on disk (JSON Lines) and the newest ones in memory."""
 
-    def __init__(self, path: Path, max_rows: int) -> None:
-        """Load the newest snapshots from ``path`` (a missing file is fine).
+    def __init__(self, path: Path, max_rows: int | None = None) -> None:
+        """Load the snapshots from ``path`` (a missing file is fine).
 
         Args:
             path: The ``snapshots.jsonl`` file.
-            max_rows: How many newest snapshots to keep in memory.
+            max_rows: How many newest snapshots to keep in memory. ``None`` keeps all of them
+                (a day is 288 small rows, so memory stays small).
         """
         self.path = path
         self.max_rows = max_rows
@@ -993,7 +994,10 @@ class HistoryStore:
                 self._rows.append(Snapshot.model_validate_json(line))
             except ValidationError:
                 log.warning("%s line %d is not a valid snapshot; skipped", self.path, number)
-        self._rows = self._rows[-self.max_rows :]
+        self._rows = self._trim(self._rows)
+
+    def _trim(self, rows: list[Snapshot]) -> list[Snapshot]:
+        return rows if self.max_rows is None else rows[-self.max_rows :]
 
     def append(self, snapshot: Snapshot) -> None:
         """Save a snapshot to disk and memory.
@@ -1008,12 +1012,19 @@ class HistoryStore:
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(snapshot.model_dump_json() + "\n")
         with self._lock:
-            self._rows = [*self._rows, snapshot][-self.max_rows :]
+            self._rows = self._trim([*self._rows, snapshot])
 
-    def recent(self) -> list[Snapshot]:
-        """Return the newest snapshots, oldest first."""
+    def recent(self, limit: int | None = None) -> list[Snapshot]:
+        """Return snapshots, oldest first.
+
+        Args:
+            limit: Return only this many of the newest. ``None`` returns all.
+
+        Returns:
+            A copy of the list.
+        """
         with self._lock:
-            return list(self._rows)
+            return list(self._rows if limit is None else self._rows[-limit:])
 
 
 class TableFiles:
@@ -1054,7 +1065,7 @@ class TableFiles:
         self.update_live(view, now)
 
     def write_history(self) -> None:
-        """Rewrite ``history.txt`` and update the terminal view."""
+        """Rewrite ``history.txt`` (every snapshot) and update the terminal view."""
         now = self.clock()
         table = build_history_table(self.store.recent(), now)
         write_atomic(self.settings.history_path, render_text(table, self.settings.table_width))
@@ -1064,7 +1075,7 @@ class TableFiles:
         """Redraw the terminal view: current users on top, history below.
 
         The history shows only as many rows as fit under the user table, so the screen
-        never scrolls. The file still holds ``max_rows`` rows.
+        never scrolls. The file holds every snapshot.
 
         Args:
             view: Current room view.
@@ -1074,7 +1085,8 @@ class TableFiles:
             return
         # 6 lines (title, 2 borders, header line, header rule, caption) for each table.
         fit = self.live.console.height - len(view.occupants) - 12 - LIVE_MARGIN
-        rows = self.store.recent()[-max(fit, MIN_LIVE_HISTORY_ROWS) :]
+        shown = min(self.settings.terminal_rows, max(fit, MIN_LIVE_HISTORY_ROWS))
+        rows = self.store.recent(shown)
         self.live.update(
             Group(
                 build_current_table(view, now, box.ROUNDED),
@@ -1695,7 +1707,7 @@ def run_extension(settings: Settings, gearth_args: list[str]) -> int:
         Process exit code.
     """
     state = RoomState()
-    store = HistoryStore(settings.snapshots_path, settings.max_rows)
+    store = HistoryStore(settings.snapshots_path)
     stop = threading.Event()
     live = None
     if sys.stdout.isatty():
@@ -1779,8 +1791,8 @@ def main(argv: list[str] | None = None) -> int:
         console.print(build_history_table(rows, now, box.ROUNDED))
         return 0
     if args.show:
-        store = HistoryStore(settings.snapshots_path, settings.max_rows)
-        console.print(build_history_table(store.recent(), now, box.ROUNDED))
+        store = HistoryStore(settings.snapshots_path)
+        console.print(build_history_table(store.recent(settings.terminal_rows), now, box.ROUNDED))
         return 0
     if not args.port:
         parser.error("-p/--port is required when G-Earth starts this script")

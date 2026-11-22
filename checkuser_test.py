@@ -461,7 +461,7 @@ def test_history_store_round_trip_skip_bad_lines_and_limit(tmp_path: Path) -> No
 def make_files(tmp_path: Path, state: cu.RoomState | None = None) -> cu.TableFiles:
     st = settings(tmp_path)
     state = state or cu.RoomState(clock=lambda: NOW)
-    return cu.TableFiles(st, state, cu.HistoryStore(st.snapshots_path, st.max_rows), lambda: NOW)
+    return cu.TableFiles(st, state, cu.HistoryStore(st.snapshots_path), lambda: NOW)
 
 
 def test_recorder_take(tmp_path: Path) -> None:
@@ -766,3 +766,27 @@ def test_logs_go_through_the_live_console() -> None:
         assert "hello [red]no markup[/red]" in buffer.getvalue()
     finally:
         root.handlers[:] = before
+
+
+def test_file_keeps_every_snapshot_and_terminal_shows_the_newest_50(tmp_path: Path) -> None:
+    state = cu.RoomState(clock=lambda: NOW)
+    state.enter_room(7)
+    files = make_files(tmp_path, state)
+    for k in range(70):
+        files.store.append(
+            cu.Snapshot(
+                taken_at=NOW + timedelta(minutes=5 * k),
+                room_id=1,
+                room_name="R",
+                count=1,
+                names=["Alice"],
+            )
+        )
+    live = FakeLive(height=200)
+    files.live = live  # type: ignore[assignment]
+    files.write_history()
+    file_text = files.settings.history_path.read_text(encoding="utf-8")
+    assert file_text.count("| 2026-11-") == 70  # every snapshot is in the file
+    assert "70 snapshots shown" in file_text
+    assert live_text(live).count("│ 2026-11-") == 50  # the terminal shows the newest 50
+    assert files.store.recent(2)[-1].taken_at == NOW + timedelta(minutes=5 * 69)

@@ -10,13 +10,13 @@ A G-Earth extension (G-Python) that counts the Habbo users in your room.
 
 - Tracks the users in the room you are in. It counts Habbo users only. It does not count bots or pets. You are counted too.
 - `data/current_users.txt`: a table of who is in the room now. The file is rewritten after every join and leave.
-- `data/history.txt`: a table with one row every 5 minutes on the clock (:00, :05, :10 ... :55). Each row has the time, "Ago", room name and count. It shows the newest 50 rows. It does not list names.
+- `data/history.txt`: a table with one row every 5 minutes on the clock (:00, :05, :10 ... :55). Each row has the time, "Ago", room name and count. The file keeps every snapshot, so it grows by 288 rows a day. It does not list names.
 - `data/snapshots.jsonl`: every snapshot with the names, one JSON object per line (times in UTC). Nothing is trimmed.
 - Type `:checkuser` in the room chat. The command is blocked, so nobody sees it. Both tables open in your default text app.
 - All times in the tables are GMT+8. Stored times are UTC.
 - An "Ago" column shows how long ago each time was: `just now` (under 5 seconds), `34 seconds ago`, `3 mins ago`, `1 hour 3 mins ago`, `1 day 2 hours ago`. `current_users.txt` is rewritten every 30 seconds while you are in a room. `history.txt` is rewritten at each snapshot and when you type `:checkuser`, so its "Ago" values can be up to 5 minutes old until you open it.
 
-- In a terminal, the script shows both tables stacked: current users on top, the history below. The history shows only as many rows as fit on the screen (at least 3). The files hold up to 50 rows. A long room name is cut with `…`.
+- In a terminal, the script shows both tables stacked: current users on top, the history below. The terminal history shows the newest 50 snapshots, or fewer if the window is small (at least 3). The files are not cut. A long room name is cut with `…`.
 
 ## Install
 
