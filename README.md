@@ -39,6 +39,23 @@ uv run --script checkuser.py --demo
 uv run --script checkuser.py --show
 ```
 
+## Live graph
+
+`usergraph.py` draws the user count from `data/snapshots.jsonl` as a live, coloured graph in the terminal. It redraws when a new snapshot is saved.
+
+![usergraph.py demo: time zone menu, time range menu, then a live graph that redraws when a snapshot is added](docs/demo/usergraph.gif)
+
+```bash
+uv run --script usergraph.py
+```
+
+- At start, select the time zone and the time range (1 hour, 1 day, 1 week, 1 month, 3 months, 6 months, 1 year or all data).
+- Time labels follow the daylight saving time rules of the zone you select.
+- Skip the menus with `--tz` and `--range`, for example `--tz Europe/London --range week`. Run `uv run --script usergraph.py --help` for all options.
+- Press Ctrl+C to stop.
+
+The demo uses fake data. Make the GIF again with `vhs docs/demo/usergraph.tape` ([vhs](https://github.com/charmbracelet/vhs)).
+
 ## Limits
 
 - It sees only the room you are in. No row is saved when you are not in a room.
